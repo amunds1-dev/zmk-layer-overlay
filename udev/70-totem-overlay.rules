@@ -3,3 +3,7 @@
 # Install: sudo cp 70-totem-overlay.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
 SUBSYSTEM=="hidraw", KERNELS=="0003:1D50:615E.*", TAG+="uaccess"
 SUBSYSTEM=="hidraw", KERNELS=="0005:1D50:615E.*", TAG+="uaccess"
+
+# ZMK Studio serial port (USB CDC ACM, /dev/ttyACM*), used to read the keymap.
+# ModemManager would otherwise probe it with AT commands.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="615e", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1"

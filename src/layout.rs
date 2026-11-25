@@ -2,7 +2,7 @@
 //! model: each key is an axis-aligned rectangle rotated by `rot` degrees (clockwise, y down)
 //! around the point (`rx`, `ry`).
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Key {
     pub x: f64,
     pub y: f64,

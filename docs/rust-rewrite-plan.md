@@ -120,7 +120,7 @@ Floating size/position: `width`, `height`, `offset_x`, `offset_y` keys.
 7. Packaging: `PKGBUILD`, `.desktop`, icon, udev rules (hidraw + tty), README rewrite. Remove the
    Python prototype.
 
-## Implementation notes (milestones 1-4 done)
+## Implementation notes (milestones 1-5 done)
 
 - Code is a Cargo project at the repo root (`src/`). `--render PATH W H` draws one frame to a PNG
   and `--demo` fakes keyboard events, handy for screenshots. `--config PATH` uses another
@@ -134,6 +134,18 @@ Floating size/position: `width`, `height`, `offset_x`, `offset_y` keys.
   automatically when switching to overlay). Command-line flags override the file for one run and
   are never saved: each settings edit is applied to both the effective and the file config.
 - Overlay uses exclusive zone 0, so margins count from inside panels/bars.
+- Studio client (`src/studio/`): hand-written prost messages matching zmk-studio-messages
+  (no protoc), SOF/ESC/EOF framing per zmk-studio-ts-client. Ports are found via sysfs
+  (`ttyACM*` with VID:PID 1d50:615e) and probed with GetDeviceInfo; the TOTEM exposes two, only
+  one answers. Fetches the keymap, the active physical layout and details for the behaviors the
+  keymap uses. Fetched on every connect; cached in `~/.cache/totem-overlay/keymap.json`.
+- Labels key off behavior display names ("Key Press", "Momentary Layer", ...); unknown behaviors
+  fall back to the parameter metadata. Key names are US (the user types US on the TOTEM).
+  Transparent keys show what they fall through to, dimmed; the key holding the current layer stays
+  blue.
+- The user's keymap has no `display-name`s, so Studio reports empty layer names and the overlay
+  shows "layer N". Renaming layers in ZMK Studio (or adding `display-name`) fixes that.
+- `--fetch-keymap` prints and caches the keymap; `--render ... --layer N` draws a given layer.
 
 ## Open issues
 

@@ -5,6 +5,7 @@ use std::f64::consts::PI;
 use gtk::cairo::{Context, Operator};
 use gtk::pango;
 
+use crate::labels::{Face, Style};
 use crate::layout::{self, Key};
 use crate::protocol::KeyState;
 
@@ -12,6 +13,8 @@ type Rgb = (f64, f64, f64);
 
 const BG: Rgb = (0.09, 0.09, 0.11);
 const KEY: Rgb = (0.20, 0.20, 0.24);
+const KEY_EMPTY: Rgb = (0.14, 0.14, 0.17);
+const KEY_HELD: Rgb = (0.36, 0.55, 0.95);
 const KEY_PRESSED: Rgb = (0.95, 0.62, 0.25);
 const TEXT: Rgb = (0.95, 0.95, 0.97);
 const TEXT_DIM: Rgb = (0.55, 0.55, 0.62);
@@ -23,13 +26,14 @@ const HEADER: f64 = 0.55;
 const GAP: f64 = 0.08;
 const KEY_RADIUS: f64 = 0.12;
 const LABEL_SIZE: f64 = 0.27;
+const HOLD_SIZE: f64 = 0.17;
 
 pub struct Scene<'a> {
     pub keys: &'a [Key],
     pub title: &'a str,
     pub subtitle: &'a str,
-    /// Labels in keymap order; missing entries are drawn blank.
-    pub labels: &'a [String],
+    /// Key faces in keymap order; missing entries are drawn blank.
+    pub faces: &'a [Face],
     pub pressed: KeyState,
     /// Opacity of the window background.
     pub bg_alpha: f64,
@@ -79,13 +83,26 @@ pub fn draw(cr: &Context, width: f64, height: f64, scene: &Scene) -> Result<(), 
         cr.rotate(key.rot.to_radians());
         cr.translate(key.x - key.rx + GAP / 2.0, key.y - key.ry + GAP / 2.0);
         let (w, h) = (key.w - GAP, key.h - GAP);
-        let pressed = scene.pressed.is_pressed(i);
-        let (fill, fg) = if pressed { (KEY_PRESSED, BG) } else { (KEY, TEXT) };
+        let face = scene.faces.get(i).cloned().unwrap_or_default();
+        let (fill, fg, dim) = if scene.pressed.is_pressed(i) {
+            (KEY_PRESSED, BG, BG)
+        } else {
+            match face.style {
+                Style::Normal => (KEY, TEXT, TEXT_DIM),
+                Style::ActiveLayer => (KEY_HELD, TEXT, TEXT),
+                Style::Transparent | Style::Empty => (KEY_EMPTY, TEXT_DIM, TEXT_DIM),
+            }
+        };
         rounded(cr, 0.0, 0.0, w, h, KEY_RADIUS);
         set_rgba(cr, fill, scene.key_alpha);
         cr.fill()?;
-        if let Some(label) = scene.labels.get(i).filter(|l| !l.is_empty()) {
-            centered(cr, label, w, h, unit, fg, scene.key_alpha);
+        let a = scene.key_alpha;
+        if face.hold.is_empty() {
+            centered(cr, &face.tap, 0.0, w, h, unit, LABEL_SIZE, fg, a);
+        } else {
+            // Tap label a little above centre, hold label small along the bottom.
+            centered(cr, &face.tap, -0.08 * h, w, h, unit, LABEL_SIZE, fg, a);
+            centered(cr, &face.hold, 0.6 * h, w, 0.4 * h, unit, HOLD_SIZE, dim, a);
         }
         cr.restore()?;
     }
@@ -127,10 +144,15 @@ fn text(cr: &Context, s: &str, x: f64, y: f64, px: f64, rgb: Rgb, a: f64, bold: 
     f64::from(lay.pixel_size().0)
 }
 
-/// Draws a label centred in a key whose user space is scaled to key units (`unit` px per unit).
-/// Text is laid out in device-pixel sizes so hinting stays sharp, then scaled back.
-fn centered(cr: &Context, s: &str, w: f64, h: f64, unit: f64, rgb: Rgb, a: f64) {
-    let mut px = LABEL_SIZE * unit;
+/// Draws a label centred in the box (0, y, w, h) of a key whose user space is scaled to key
+/// units (`unit` px per unit), shrinking it to fit. Text is laid out in device-pixel sizes so
+/// hinting stays sharp, then scaled back.
+#[allow(clippy::too_many_arguments)]
+fn centered(cr: &Context, s: &str, y: f64, w: f64, h: f64, unit: f64, size: f64, rgb: Rgb, a: f64) {
+    if s.is_empty() {
+        return;
+    }
+    let mut px = size * unit;
     let max_w = (w - 0.1) * unit;
     let mut lay = make_layout(cr, s, px, false);
     while f64::from(lay.pixel_size().0) > max_w && px > 6.0 {
@@ -140,7 +162,7 @@ fn centered(cr: &Context, s: &str, w: f64, h: f64, unit: f64, rgb: Rgb, a: f64) 
     let (tw, th) = lay.pixel_size();
     cr.save().ok();
     cr.scale(1.0 / unit, 1.0 / unit);
-    cr.move_to((w * unit - f64::from(tw)) / 2.0, (h * unit - f64::from(th)) / 2.0);
+    cr.move_to((w * unit - f64::from(tw)) / 2.0, y * unit + (h * unit - f64::from(th)) / 2.0);
     set_rgba(cr, rgb, a);
     pangocairo::functions::update_layout(cr, &lay);
     pangocairo::functions::show_layout(cr, &lay);

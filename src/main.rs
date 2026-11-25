@@ -1,11 +1,14 @@
 mod config;
 mod draw;
 mod hid;
+mod keymap;
+mod labels;
 mod layout;
 mod overlay;
 mod protocol;
 mod settings;
 mod state;
+mod studio;
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -43,6 +46,8 @@ const USAGE: &str = "usage: totem-overlay [options]
   --demo              fake layer changes and key presses instead of reading the keyboard
   -v, --verbose       print keyboard events
   --render PATH W H   draw one frame to a PNG and exit (development aid)
+  --layer N           with --render: draw layer N as if the keyboard reported it
+  --fetch-keymap      read the keymap over USB (ZMK Studio), cache and print it, and exit
 
 --mode, --show, --position, --margin, --scale and --product override the settings file for
 this run only.";
@@ -89,6 +94,8 @@ struct Options {
     demo: bool,
     verbose: bool,
     render: Option<(PathBuf, i32, i32)>,
+    render_layer: Option<u8>,
+    fetch_keymap: bool,
 }
 
 fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Option<Options>, String> {
@@ -117,6 +124,8 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Option<Options>,
             "--config" => o.config = Some(PathBuf::from(value("--config")?)),
             "--demo" => o.demo = true,
             "-v" | "--verbose" => o.verbose = true,
+            "--fetch-keymap" => o.fetch_keymap = true,
+            "--layer" => o.render_layer = Some(value("--layer")?.parse().map_err(|_| "--layer needs a layer number")?),
             "--render" => {
                 let path = args.next().map(PathBuf::from);
                 let w = args.next().and_then(|v| v.parse().ok());
@@ -136,7 +145,9 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Option<Options>,
 /// What gets drawn.
 struct View {
     keys: Vec<layout::Key>,
-    labels: Vec<String>,
+    keymap: Option<keymap::Keymap>,
+    /// Why there is no keymap (shown while there is none).
+    keymap_status: Option<String>,
     keyboard: state::Keyboard,
     /// Show/hide fade, 0..1.
     alpha: f64,
@@ -146,24 +157,55 @@ struct View {
 
 impl View {
     fn new() -> Self {
-        let keys = layout::totem();
-        // No keymap source yet (milestones 5/6): label keys with their position index.
-        let labels = (0..keys.len()).map(|i| i.to_string()).collect();
-        View { keys, labels, keyboard: state::Keyboard::default(), alpha: 1.0, notice: None }
+        View {
+            keys: layout::totem(),
+            keymap: None,
+            keymap_status: None,
+            keyboard: state::Keyboard::default(),
+            alpha: 1.0,
+            notice: None,
+        }
+    }
+
+    fn set_keymap(&mut self, km: keymap::Keymap) {
+        // The keyboard's own physical layout, unless it reported none.
+        self.keys = if km.layout.is_empty() { layout::totem() } else { km.layout.clone() };
+        self.keymap = Some(km);
+        self.keymap_status = None;
+    }
+
+    /// Faces of the keys for the current layer, and the header title.
+    fn faces_and_title(&self) -> (Vec<labels::Face>, String) {
+        let state = self.keyboard.layer.as_ref();
+        let Some(km) = &self.keymap else {
+            // No keymap yet: number the keys by position.
+            let faces = (0..self.keys.len()).map(|i| labels::Face { tap: i.to_string(), ..Default::default() });
+            return (faces.collect(), self.keyboard.header().0);
+        };
+        let index = state.map_or(0, |s| km.layer_index(s));
+        let faces = labels::layer_faces(km, index, &|id| km.layer_active(state, id));
+        let title = match state {
+            Some(s) if !s.name.is_empty() => s.name.clone(),
+            _ => km.layers.get(index).map_or_else(String::new, |l| km.layer_name(l.id)),
+        };
+        (faces, title)
     }
 
     fn draw(&self, cr: &cairo::Context, w: f64, h: f64, config: &Config) -> Result<(), cairo::Error> {
-        let (title, mut subtitle) = self.keyboard.header();
-        if subtitle.is_empty()
-            && let Some(n) = &self.notice
-        {
-            subtitle = n.clone();
+        let (faces, title) = self.faces_and_title();
+        let mut subtitle = self.keyboard.header().1;
+        for extra in [&self.keymap_status, &self.notice] {
+            if subtitle.is_empty()
+                && let Some(s) = extra
+            {
+                subtitle = s.clone();
+            }
         }
         let scene = draw::Scene {
             keys: &self.keys,
             title: &title,
             subtitle: &subtitle,
-            labels: &self.labels,
+            faces: &faces,
             pressed: self.keyboard.keys,
             bg_alpha: config.background_opacity * self.alpha,
             key_alpha: config.key_opacity * self.alpha,
@@ -185,6 +227,9 @@ struct App {
     fade: RefCell<Option<glib::SourceId>>,
     save: RefCell<Option<glib::SourceId>>,
     listener: RefCell<Option<hid::Listener>>,
+    /// A keymap fetch over USB is running.
+    fetching: Cell<bool>,
+    demo: bool,
     _hold: gio::ApplicationHoldGuard,
 }
 
@@ -202,10 +247,43 @@ fn main() -> glib::ExitCode {
         }
     };
 
+    if opts.fetch_keymap {
+        return match studio::fetch() {
+            Ok(km) => {
+                print_keymap(&km);
+                let path = keymap::cache_path();
+                match keymap::save_cache(&path, &km) {
+                    Ok(()) => println!("cached in {}", path.display()),
+                    Err(e) => eprintln!("could not write {}: {e}", path.display()),
+                }
+                glib::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                glib::ExitCode::FAILURE
+            }
+        };
+    }
+
     if let Some((path, w, h)) = &opts.render {
         let mut config = config::load(&opts.config.clone().unwrap_or_else(config::default_path)).0;
         opts.overrides.apply(&mut config);
-        return match render_png(&View::new(), &config, path, *w, *h) {
+        let mut view = View::new();
+        if let Some(km) = keymap::load_cache(&keymap::cache_path()) {
+            if let Some(index) = opts.render_layer {
+                let layer_id = km.layers.get(usize::from(index)).map_or(u32::from(index), |l| l.id);
+                let layer_id = u8::try_from(layer_id).unwrap_or(index);
+                view.keyboard.device = Some(km.device.clone());
+                view.keyboard.layer = Some(protocol::LayerState {
+                    index,
+                    layer_id,
+                    mask: 1u32.checked_shl(u32::from(layer_id)).unwrap_or(0),
+                    name: String::new(),
+                });
+            }
+            view.set_keymap(km);
+        }
+        return match render_png(&view, &config, path, *w, *h) {
             Ok(()) => glib::ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("render failed: {e}");
@@ -259,6 +337,9 @@ fn start(gapp: &gtk::Application, opts: &Options) -> Rc<App> {
 
     let mut view = View::new();
     view.notice = notice;
+    if let Some(km) = keymap::load_cache(&keymap::cache_path()) {
+        view.set_keymap(km);
+    }
     view.alpha = if view.keyboard.wants_visible(config.show) { 1.0 } else { 0.0 };
 
     let (tx, rx) = async_channel::unbounded::<hid::Event>();
@@ -280,6 +361,8 @@ fn start(gapp: &gtk::Application, opts: &Options) -> Rc<App> {
         fade: RefCell::default(),
         save: RefCell::default(),
         listener: RefCell::new(listener),
+        fetching: Cell::new(false),
+        demo: opts.demo,
         _hold: gapp.hold(),
     });
 
@@ -298,6 +381,10 @@ fn start(gapp: &gtk::Application, opts: &Options) -> Rc<App> {
             if verbose {
                 eprintln!("{event:?}");
             }
+            // (Re)connected: refresh the keymap if the keyboard is on USB.
+            if matches!(event, hid::Event::Connected(_)) {
+                fetch_keymap(&a);
+            }
             let changed = a.view.borrow_mut().keyboard.apply(event);
             if changed {
                 queue_draw(&a);
@@ -308,7 +395,73 @@ fn start(gapp: &gtk::Application, opts: &Options) -> Rc<App> {
 
     install_css();
     build_window(&app);
+    fetch_keymap(&app);
     app
+}
+
+/// Reads the keymap over USB (ZMK Studio) in the background and shows/caches it.
+fn fetch_keymap(app: &Rc<App>) {
+    if app.demo || app.fetching.replace(true) {
+        return;
+    }
+    let (tx, rx) = async_channel::bounded(1);
+    std::thread::spawn(move || {
+        // Right after plugging in, the serial port can appear a little after the HID device.
+        let mut result = studio::fetch();
+        for _ in 0..6 {
+            if !matches!(result, Err(studio::Error::NoPort)) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+            result = studio::fetch();
+        }
+        let _ = tx.send_blocking(result);
+    });
+    let a = app.clone();
+    glib::spawn_future_local(async move {
+        let Ok(result) = rx.recv().await else { return };
+        a.fetching.set(false);
+        match result {
+            Ok(km) => {
+                if a.view.borrow().keymap.as_ref() == Some(&km) {
+                    return;
+                }
+                eprintln!("keymap: read {} layers from {}", km.layers.len(), km.device);
+                if let Err(e) = keymap::save_cache(&keymap::cache_path(), &km) {
+                    eprintln!("cannot cache keymap: {e}");
+                }
+                a.view.borrow_mut().set_keymap(km);
+                resize_overlay(&a);
+                queue_draw(&a);
+            }
+            Err(e) => {
+                eprintln!("keymap: {e}");
+                let mut view = a.view.borrow_mut();
+                if view.keymap.is_none() {
+                    view.keymap_status = Some(match e {
+                        studio::Error::NoPort => "no keymap yet: connect the keyboard over USB once".into(),
+                        e => e.to_string(),
+                    });
+                    drop(view);
+                    queue_draw(&a);
+                }
+            }
+        }
+    });
+}
+
+/// Overlay mode sizes the surface from its content; call after the layout or scale changes.
+fn resize_overlay(app: &App) {
+    let config = app.config.borrow().clone();
+    if config.mode != Mode::Overlay {
+        return;
+    }
+    let (w, h) = window_size(app);
+    if let Some((win, area)) = app.window.borrow().as_ref() {
+        overlay::place(win, config.position, config.margin);
+        area.set_content_width(w);
+        area.set_content_height(h);
+    }
 }
 
 const CSS: &str = "
@@ -480,14 +633,7 @@ fn apply_change(app: &Rc<App>, change: settings::Change) {
         });
         return;
     }
-    if new.mode == Mode::Overlay {
-        let (w, h) = window_size(app);
-        if let Some((win, area)) = app.window.borrow().as_ref() {
-            overlay::place(win, new.position, new.margin);
-            area.set_content_width(w);
-            area.set_content_height(h);
-        }
-    }
+    resize_overlay(app);
     update_visibility(app);
     queue_draw(app);
 }
@@ -571,6 +717,22 @@ fn start_demo(tx: async_channel::Sender<hid::Event>, key_count: usize) {
         let keys = KeyState { mask: 1 << k };
         glib::ControlFlow::from(tx.send_blocking(hid::Event::Report(Report::Keys(keys))).is_ok())
     });
+}
+
+fn print_keymap(km: &keymap::Keymap) {
+    println!("device: {}", km.device);
+    println!("physical layout: {} keys", km.layout.len());
+    for b in &km.behaviors {
+        println!("behavior {} {:?}: {} parameter set(s)", b.id, b.name, b.params.len());
+    }
+    for (i, layer) in km.layers.iter().enumerate() {
+        let faces = labels::layer_faces(km, i, &|_| false);
+        let shown: Vec<String> = faces
+            .iter()
+            .map(|f| if f.hold.is_empty() { f.tap.clone() } else { format!("{}/{}", f.tap, f.hold) })
+            .collect();
+        println!("layer {i} id={} {:?}: {}", layer.id, layer.name, shown.join(" "));
+    }
 }
 
 fn render_png(view: &View, config: &Config, path: &PathBuf, w: i32, h: i32) -> Result<(), Box<dyn std::error::Error>> {
