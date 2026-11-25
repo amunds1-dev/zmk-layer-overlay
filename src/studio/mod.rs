@@ -247,6 +247,7 @@ fn convert_behavior(d: GetBehaviorDetailsResponse) -> Behavior {
         id: d.id,
         name: d.display_name,
         params: d.metadata.into_iter().map(|s| ParamSet { param1: values(s.param1), param2: values(s.param2) }).collect(),
+        bindings: Vec::new(),
     }
 }
 

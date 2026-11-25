@@ -244,8 +244,41 @@ pub fn face(km: &Keymap, b: &Binding, layer_active: &dyn Fn(u32) -> bool) -> Fac
         "Bootloader" => plain("Boot".into(), ""),
         "Reset" => plain("Reset".into(), ""),
         "Studio Unlock" => plain("Studio".into(), "unlock"),
+        "Key Toggle" => plain(usage_label(b.param1), "toggle"),
+        "Grave/Escape" => plain("Esc".into(), "`"),
+        // Composite behaviors from a .keymap file (Studio reports these by their own name).
+        "Hold-Tap" | "Mod-Morph" | "Tap Dance" if !behavior.bindings.is_empty() => {
+            composite_face(km, &behavior.name, &behavior.bindings, b, layer_active)
+        }
         _ => generic_face(km, behavior, b),
     }
+}
+
+/// A behavior built from others: a hold-tap passes its two parameters to its hold and tap
+/// behaviors; a mod-morph shows its plain side with the modified side below; a tap-dance its
+/// first tap with the second below.
+fn composite_face(
+    km: &Keymap,
+    kind: &str,
+    inner: &[Binding],
+    b: &Binding,
+    layer_active: &dyn Fn(u32) -> bool,
+) -> Face {
+    let sub = |i: usize, param: Option<u32>| {
+        inner.get(i).map_or_else(Face::default, |ib| {
+            let ib = match param {
+                Some(p) => Binding { param1: p, param2: 0, ..*ib },
+                None => *ib,
+            };
+            face(km, &ib, layer_active)
+        })
+    };
+    let (main, below) = match kind {
+        "Hold-Tap" => (sub(1, Some(b.param2)), sub(0, Some(b.param1))),
+        _ => (sub(0, None), sub(1, None)),
+    };
+    let style = if below.style == Style::ActiveLayer { Style::ActiveLayer } else { Style::Normal };
+    Face { tap: main.tap, hold: below.tap, style }
 }
 
 /// Unknown behavior (custom hold-tap, macro, ...): describe it from its parameter metadata.

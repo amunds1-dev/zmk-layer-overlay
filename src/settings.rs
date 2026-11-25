@@ -1,8 +1,10 @@
 //! Settings controls, shown in a popover (window mode, right-click) or a settings window
 //! (`totem-overlay --settings`, needed in overlay mode because the overlay is click-through).
 
+use std::path::Path;
 use std::rc::Rc;
 
+use gtk::gio;
 use gtk::prelude::*;
 
 use crate::config::{Config, MARGIN_RANGE, SCALE_RANGE, Show};
@@ -61,6 +63,8 @@ pub fn build(config: &Config, on_change: Rc<dyn Fn(Change)>, on_quit: impl Fn() 
     });
     add("Overlay scale", scale.upcast_ref());
 
+    add("Keymap file", keymap_file_picker(&config.keymap_file, on_change.clone()).upcast_ref());
+
     // Overlay-only settings are greyed out in window mode.
     let overlay_widgets: [gtk::Widget; 3] = [position.upcast(), margin.upcast(), scale.upcast()];
     let set_sensitive = move |m: Mode| overlay_widgets.iter().for_each(|w| w.set_sensitive(m == Mode::Overlay));
@@ -90,6 +94,67 @@ pub fn build(config: &Config, on_change: Rc<dyn Fn(Change)>, on_quit: impl Fn() 
     vbox.append(&hint);
     vbox.append(&quit);
     vbox
+}
+
+/// File name button (opens a file dialog) plus a clear button, for the `.keymap` fallback.
+fn keymap_file_picker(current: &str, on_change: Rc<dyn Fn(Change)>) -> gtk::Box {
+    let button_label = |path: &str| match Path::new(path).file_name() {
+        Some(name) if !path.is_empty() => name.to_string_lossy().into_owned(),
+        _ => "None".to_string(),
+    };
+    let pick = gtk::Button::with_label(&button_label(current));
+    pick.set_hexpand(true);
+    pick.set_tooltip_text(Some(
+        "Used when the keymap can't be read from the keyboard over USB (ZMK Studio)",
+    ));
+    let clear = gtk::Button::from_icon_name("edit-clear-symbolic");
+    clear.set_tooltip_text(Some("Don't use a keymap file"));
+    clear.set_sensitive(!current.is_empty());
+
+    let set: Rc<dyn Fn(String)> = {
+        let (pick, clear) = (pick.clone(), clear.clone());
+        Rc::new(move |path: String| {
+            pick.set_label(&button_label(&path));
+            clear.set_sensitive(!path.is_empty());
+            on_change(Box::new(move |c| c.keymap_file = path.clone()));
+        })
+    };
+    let current = current.to_string();
+    let s = set.clone();
+    pick.connect_clicked(move |b| {
+        let filter = gtk::FileFilter::new();
+        filter.set_name(Some("ZMK keymaps"));
+        filter.add_pattern("*.keymap");
+        let filters = gio::ListStore::new::<gtk::FileFilter>();
+        filters.append(&filter);
+        let dialog = gtk::FileDialog::builder().title("ZMK keymap file").modal(true).filters(&filters).build();
+        if !current.is_empty() {
+            dialog.set_initial_file(Some(&gio::File::for_path(crate::keymap_file::expand_home(&current))));
+        }
+        let window = b.root().and_downcast::<gtk::Window>();
+        let s = s.clone();
+        dialog.open(window.as_ref(), gio::Cancellable::NONE, move |result| {
+            if let Ok(path) = result.map(|f| f.path())
+                && let Some(path) = path
+            {
+                s(home_relative(&path));
+            }
+        });
+    });
+    clear.connect_clicked(move |_| set(String::new()));
+
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    row.append(&pick);
+    row.append(&clear);
+    row
+}
+
+/// `/home/me/x` -> `~/x`, so the config stays valid if the home directory moves.
+fn home_relative(path: &Path) -> String {
+    match path.strip_prefix(gtk::glib::home_dir()) {
+        Ok(rest) => format!("~/{}", rest.display()),
+        Err(_) => path.display().to_string(),
+    }
 }
 
 fn opacity_slider(value: f64, on_change: Rc<dyn Fn(Change)>, set: fn(&mut Config, f64)) -> gtk::Scale {

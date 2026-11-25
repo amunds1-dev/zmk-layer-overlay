@@ -2,6 +2,7 @@ mod config;
 mod draw;
 mod hid;
 mod keymap;
+mod keymap_file;
 mod labels;
 mod layout;
 mod overlay;
@@ -42,15 +43,17 @@ const USAGE: &str = "usage: totem-overlay [options]
   --margin PX         overlay distance from the anchored edges
   --scale FACTOR      overlay size factor
   --product NAME      only use Raw HID devices whose product name contains NAME (\"\" for any)
+  --keymap PATH       ZMK .keymap file to use when the keymap can't be read over USB
   --config PATH       settings file (default: ~/.config/totem-overlay/config.toml)
   --demo              fake layer changes and key presses instead of reading the keyboard
   -v, --verbose       print keyboard events
   --render PATH W H   draw one frame to a PNG and exit (development aid)
   --layer N           with --render: draw layer N as if the keyboard reported it
   --fetch-keymap      read the keymap over USB (ZMK Studio), cache and print it, and exit
+  --parse-keymap PATH parse a ZMK .keymap file, print it and exit
 
---mode, --show, --position, --margin, --scale and --product override the settings file for
-this run only.";
+--mode, --show, --position, --margin, --scale, --product and --keymap override the settings
+file for this run only.";
 
 /// Command-line values that override the settings file for one run.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -61,6 +64,7 @@ struct Overrides {
     margin: Option<i32>,
     scale: Option<f64>,
     product: Option<String>,
+    keymap_file: Option<String>,
 }
 
 impl Overrides {
@@ -83,6 +87,9 @@ impl Overrides {
         if let Some(v) = &self.product {
             c.product = v.clone();
         }
+        if let Some(v) = &self.keymap_file {
+            c.keymap_file = v.clone();
+        }
     }
 }
 
@@ -96,6 +103,7 @@ struct Options {
     render: Option<(PathBuf, i32, i32)>,
     render_layer: Option<u8>,
     fetch_keymap: bool,
+    parse_keymap: Option<PathBuf>,
 }
 
 fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Option<Options>, String> {
@@ -121,6 +129,8 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Option<Options>,
                 ov.scale = Some(s.clamp(config::SCALE_RANGE.0, config::SCALE_RANGE.1));
             }
             "--product" => ov.product = Some(value("--product")?),
+            "--keymap" => ov.keymap_file = Some(value("--keymap")?),
+            "--parse-keymap" => o.parse_keymap = Some(PathBuf::from(value("--parse-keymap")?)),
             "--config" => o.config = Some(PathBuf::from(value("--config")?)),
             "--demo" => o.demo = true,
             "-v" | "--verbose" => o.verbose = true,
@@ -146,6 +156,8 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Option<Options>,
 struct View {
     keys: Vec<layout::Key>,
     keymap: Option<keymap::Keymap>,
+    /// The keymap came from the `.keymap` file, not the keyboard (Studio replaces it).
+    keymap_from_file: bool,
     /// Why there is no keymap (shown while there is none).
     keymap_status: Option<String>,
     keyboard: state::Keyboard,
@@ -160,6 +172,7 @@ impl View {
         View {
             keys: layout::totem(),
             keymap: None,
+            keymap_from_file: false,
             keymap_status: None,
             keyboard: state::Keyboard::default(),
             alpha: 1.0,
@@ -171,7 +184,13 @@ impl View {
         // The keyboard's own physical layout, unless it reported none.
         self.keys = if km.layout.is_empty() { layout::totem() } else { km.layout.clone() };
         self.keymap = Some(km);
+        self.keymap_from_file = false;
         self.keymap_status = None;
+    }
+
+    /// Whether the keymap file should be (re)loaded: there is no keymap from the keyboard.
+    fn wants_file(&self) -> bool {
+        self.keymap.is_none() || self.keymap_from_file
     }
 
     /// Faces of the keys for the current layer, and the header title.
@@ -229,6 +248,9 @@ struct App {
     listener: RefCell<Option<hid::Listener>>,
     /// A keymap fetch over USB is running.
     fetching: Cell<bool>,
+    /// Watches the `.keymap` file in use, and the pending reload after it changed.
+    keymap_monitor: RefCell<Option<(PathBuf, gio::FileMonitor)>>,
+    keymap_reload: RefCell<Option<glib::SourceId>>,
     demo: bool,
     _hold: gio::ApplicationHoldGuard,
 }
@@ -265,11 +287,29 @@ fn main() -> glib::ExitCode {
         };
     }
 
+    if let Some(path) = &opts.parse_keymap {
+        return match keymap_file::load(path) {
+            Ok((km, warnings)) => {
+                warnings.iter().for_each(|w| eprintln!("warning: {w}"));
+                print_keymap(&km);
+                glib::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                glib::ExitCode::FAILURE
+            }
+        };
+    }
+
     if let Some((path, w, h)) = &opts.render {
         let mut config = config::load(&opts.config.clone().unwrap_or_else(config::default_path)).0;
         opts.overrides.apply(&mut config);
         let mut view = View::new();
-        if let Some(km) = keymap::load_cache(&keymap::cache_path()) {
+        let from_file = || {
+            let file = &config.keymap_file;
+            (!file.is_empty()).then(|| keymap_file::load(&keymap_file::expand_home(file)).ok()).flatten().map(|r| r.0)
+        };
+        if let Some(km) = keymap::load_cache(&keymap::cache_path()).or_else(from_file) {
             if let Some(index) = opts.render_layer {
                 let layer_id = km.layers.get(usize::from(index)).map_or(u32::from(index), |l| l.id);
                 let layer_id = u8::try_from(layer_id).unwrap_or(index);
@@ -362,6 +402,8 @@ fn start(gapp: &gtk::Application, opts: &Options) -> Rc<App> {
         save: RefCell::default(),
         listener: RefCell::new(listener),
         fetching: Cell::new(false),
+        keymap_monitor: RefCell::default(),
+        keymap_reload: RefCell::default(),
         demo: opts.demo,
         _hold: gapp.hold(),
     });
@@ -393,10 +435,85 @@ fn start(gapp: &gtk::Application, opts: &Options) -> Rc<App> {
         }
     });
 
+    load_keymap_file(&app);
     install_css();
     build_window(&app);
     fetch_keymap(&app);
     app
+}
+
+/// Uses the configured `.keymap` file while there is no keymap from the keyboard, and watches
+/// it so edits show up right away.
+fn load_keymap_file(app: &Rc<App>) {
+    let setting = app.config.borrow().keymap_file.clone();
+    let path = (!setting.is_empty()).then(|| keymap_file::expand_home(&setting));
+    watch_keymap_file(app, path.as_deref());
+    let mut view = app.view.borrow_mut();
+    if !view.wants_file() {
+        return;
+    }
+    let Some(path) = path else {
+        if view.keymap_from_file {
+            // The file setting was cleared.
+            view.keymap = None;
+            view.keymap_from_file = false;
+            drop(view);
+            queue_draw(app);
+        }
+        return;
+    };
+    match keymap_file::load(&path) {
+        Ok((km, warnings)) => {
+            for w in warnings {
+                eprintln!("keymap file: {w}");
+            }
+            if view.keymap.as_ref() != Some(&km) {
+                eprintln!("keymap: read {} layers from {}", km.layers.len(), path.display());
+                view.set_keymap(km);
+                view.keymap_from_file = true;
+            }
+        }
+        Err(e) => {
+            eprintln!("keymap file: {e}");
+            // Keep showing the last good version while the file is being edited.
+            if view.keymap.is_none() {
+                view.keymap_status = Some(e.to_string());
+            }
+        }
+    }
+    drop(view);
+    resize_overlay(app);
+    queue_draw(app);
+}
+
+fn watch_keymap_file(app: &Rc<App>, path: Option<&std::path::Path>) {
+    if app.keymap_monitor.borrow().as_ref().map(|(p, _)| p.as_path()) == path {
+        return;
+    }
+    let monitor = path.and_then(|path| {
+        let file = gio::File::for_path(path);
+        let monitor = file.monitor_file(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE).ok()?;
+        let a = Rc::downgrade(app);
+        monitor.connect_changed(move |_, _, _, event| {
+            use gio::FileMonitorEvent as E;
+            if !matches!(event, E::ChangesDoneHint | E::Created | E::Renamed | E::MovedIn) {
+                return;
+            }
+            let Some(a) = a.upgrade() else { return };
+            // Editors save in several steps; reload once things settle.
+            if let Some(id) = a.keymap_reload.take() {
+                id.remove();
+            }
+            let a2 = a.clone();
+            let id = glib::timeout_add_local_once(Duration::from_millis(300), move || {
+                a2.keymap_reload.take();
+                load_keymap_file(&a2);
+            });
+            *a.keymap_reload.borrow_mut() = Some(id);
+        });
+        Some((path.to_path_buf(), monitor))
+    });
+    *app.keymap_monitor.borrow_mut() = monitor;
 }
 
 /// Reads the keymap over USB (ZMK Studio) in the background and shows/caches it.
@@ -438,8 +555,12 @@ fn fetch_keymap(app: &Rc<App>) {
                 eprintln!("keymap: {e}");
                 let mut view = a.view.borrow_mut();
                 if view.keymap.is_none() {
+                    let file = !a.config.borrow().keymap_file.is_empty();
                     view.keymap_status = Some(match e {
-                        studio::Error::NoPort => "no keymap yet: connect the keyboard over USB once".into(),
+                        studio::Error::NoPort if file => "keymap file not loaded; no keymap over USB either".into(),
+                        studio::Error::NoPort => {
+                            "no keymap yet: connect the keyboard over USB once, or set a keymap file".into()
+                        }
                         e => e.to_string(),
                     });
                     drop(view);
@@ -620,6 +741,9 @@ fn apply_change(app: &Rc<App>, change: settings::Change) {
     }
     schedule_save(app);
     app.view.borrow_mut().notice = None;
+    if new.keymap_file != old.keymap_file {
+        load_keymap_file(app);
+    }
 
     if new.mode != old.mode {
         // Rebuild outside the signal handler: the popover that sent this lives in the old window.
@@ -765,7 +889,7 @@ mod tests {
     fn overrides_apply_on_top_of_config() {
         let o = parse(&[
             "--mode", "overlay", "--position", "top-right", "--margin", "12", "--scale", "0.75", "--show",
-            "layers", "--product", "",
+            "layers", "--product", "", "--keymap", "~/k.keymap",
         ])
         .unwrap()
         .unwrap();
@@ -775,6 +899,7 @@ mod tests {
         assert_eq!(c.position, Position::TopRight);
         assert_eq!((c.margin, c.scale, c.show), (12, 0.75, Show::Layers));
         assert_eq!(c.product_filter(), None);
+        assert_eq!(c.keymap_file, "~/k.keymap");
         assert_eq!(c.key_opacity, 0.5);
     }
 

@@ -55,6 +55,9 @@ pub struct Config {
     pub scale: f64,
     /// Only use Raw HID devices whose product name contains this (empty: any).
     pub product: String,
+    /// ZMK `.keymap` file used when the keyboard's keymap can't be read over USB (ZMK Studio).
+    /// `~/` is allowed; empty for none.
+    pub keymap_file: String,
 }
 
 pub const SCALE_RANGE: (f64, f64) = (0.3, 3.0);
@@ -71,6 +74,7 @@ impl Default for Config {
             margin: 40,
             scale: 1.0,
             product: "TOTEM".into(),
+            keymap_file: String::new(),
         }
     }
 }
@@ -156,6 +160,7 @@ mod tests {
             margin: 12,
             scale: 1.5,
             product: String::new(),
+            keymap_file: "~/zmk-config/config/board.keymap".into(),
         };
         save(&path, &c).unwrap();
         assert_eq!(load(&path), (c, None));

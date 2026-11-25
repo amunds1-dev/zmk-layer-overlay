@@ -47,6 +47,10 @@ pub struct Behavior {
     pub name: String,
     /// Alternative parameter sets the behavior accepts.
     pub params: Vec<ParamSet>,
+    /// For behaviors read from a `.keymap` file: the bindings it is built from (hold and tap
+    /// of a hold-tap, the two sides of a mod-morph, the taps of a tap-dance).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bindings: Vec<Binding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -160,14 +164,15 @@ pub mod tests {
     pub fn sample() -> Keymap {
         let set = |p1: Vec<ParamValue>, p2: Vec<ParamValue>| ParamSet { param1: p1, param2: p2 };
         let behaviors = vec![
-            Behavior { id: KP, name: "Key Press".into(), params: vec![set(vec![v("Key", ParamKind::HidUsage)], vec![])] },
-            Behavior { id: MO, name: "Momentary Layer".into(), params: vec![set(vec![v("Layer", ParamKind::LayerId)], vec![])] },
-            Behavior { id: TRANS, name: "Transparent".into(), params: vec![] },
-            Behavior { id: NONE, name: "None".into(), params: vec![] },
+            Behavior { id: KP, name: "Key Press".into(), params: vec![set(vec![v("Key", ParamKind::HidUsage)], vec![])], bindings: vec![] },
+            Behavior { id: MO, name: "Momentary Layer".into(), params: vec![set(vec![v("Layer", ParamKind::LayerId)], vec![])], bindings: vec![] },
+            Behavior { id: TRANS, name: "Transparent".into(), params: vec![], bindings: vec![] },
+            Behavior { id: NONE, name: "None".into(), params: vec![], bindings: vec![] },
             Behavior {
                 id: LT,
                 name: "Layer-Tap".into(),
                 params: vec![set(vec![v("Layer", ParamKind::LayerId)], vec![v("Tap", ParamKind::HidUsage)])],
+                bindings: vec![],
             },
             Behavior {
                 id: BT,
@@ -176,6 +181,7 @@ pub mod tests {
                     set(vec![v("Clear", ParamKind::Constant(0))], vec![]),
                     set(vec![v("Select Profile", ParamKind::Constant(3))], vec![v("Profile", ParamKind::Range { min: 0, max: 4 })]),
                 ],
+                bindings: vec![],
             },
         ];
         let b = |behavior: u32, param1: u32, param2: u32| Binding { behavior: behavior as i32, param1, param2 };
