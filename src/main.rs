@@ -1,6 +1,7 @@
 mod draw;
 mod hid;
 mod layout;
+mod overlay;
 mod protocol;
 mod state;
 
@@ -14,12 +15,18 @@ use gtk::{cairo, gio, glib};
 
 /// Wayland app id (xdg toplevel). Not a valid GApplication id (no dot), so it is set as the
 /// program name, which GTK uses for the app id when the GtkApplication has none.
-const APP_ID: &str = "totem-overlay";
+pub const APP_ID: &str = "totem-overlay";
 /// Default window size: pixels per key unit.
 const DEFAULT_UNIT_PX: f64 = 56.0;
 
 const USAGE: &str = "usage: totem-overlay [options]
 
+  --mode MODE         window (default): normal window the compositor manages;
+                      overlay: always-on-top, click-through layer-shell surface
+  --position POS      overlay anchor: top, bottom (default), left, right, top-left,
+                      top-right, bottom-left, bottom-right, center
+  --margin PX         overlay distance from the anchored edges (default: 40)
+  --scale FACTOR      overlay size factor (default: 1.0)
   --product NAME      only use Raw HID devices whose product name contains NAME
                       (default: TOTEM; \"\" for any)
   --demo              fake layer changes and key presses instead of reading the keyboard
@@ -28,6 +35,10 @@ const USAGE: &str = "usage: totem-overlay [options]
 
 #[derive(Debug, Clone)]
 struct Options {
+    mode: overlay::Mode,
+    position: overlay::Position,
+    margin: i32,
+    scale: f64,
     product: Option<String>,
     demo: bool,
     verbose: bool,
@@ -35,11 +46,33 @@ struct Options {
 }
 
 fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Option<Options>, String> {
-    let mut o = Options { product: Some("TOTEM".into()), demo: false, verbose: false, render: None };
+    let mut o = Options {
+        mode: overlay::Mode::default(),
+        position: overlay::Position::default(),
+        margin: 40,
+        scale: 1.0,
+        product: Some("TOTEM".into()),
+        demo: false,
+        verbose: false,
+        render: None,
+    };
     while let Some(arg) = args.next() {
+        let mut value = |name: &str| args.next().ok_or(format!("{name} needs a value"));
         match arg.as_str() {
+            "--mode" => o.mode = value("--mode")?.parse()?,
+            "--position" => o.position = value("--position")?.parse()?,
+            "--margin" => {
+                o.margin = value("--margin")?.parse().map_err(|_| "--margin needs a number of pixels")?
+            }
+            "--scale" => {
+                o.scale = value("--scale")?
+                    .parse()
+                    .ok()
+                    .filter(|s: &f64| *s > 0.0 && s.is_finite())
+                    .ok_or("--scale needs a positive number")?
+            }
             "--product" => {
-                let p = args.next().ok_or("--product needs a NAME")?;
+                let p = value("--product")?;
                 o.product = (!p.is_empty()).then_some(p);
             }
             "--demo" => o.demo = true,
@@ -135,14 +168,26 @@ fn build_window(app: &gtk::Application, opts: &Options) {
         }
     });
 
+    let scale = if opts.mode == overlay::Mode::Overlay { opts.scale } else { 1.0 };
+    let width = (nat_w * DEFAULT_UNIT_PX * scale).round() as i32;
+    let height = (nat_h * DEFAULT_UNIT_PX * scale).round() as i32;
     let win = gtk::ApplicationWindow::builder()
         .application(app)
         .title("TOTEM layers")
         .decorated(false)
-        .default_width((nat_w * DEFAULT_UNIT_PX).round() as i32)
-        .default_height((nat_h * DEFAULT_UNIT_PX).round() as i32)
+        .default_width(width)
+        .default_height(height)
         .child(&area)
         .build();
+    if opts.mode == overlay::Mode::Overlay {
+        if overlay::setup(&win, opts.position, opts.margin) {
+            // A layer surface takes its size from the content, not the default size.
+            area.set_content_width(width);
+            area.set_content_height(height);
+        } else {
+            eprintln!("overlay mode needs wlr-layer-shell, which this compositor lacks; using a window");
+        }
+    }
     // Let the drawing's own (translucent) background show instead of the theme's.
     let css = gtk::CssProvider::new();
     css.load_from_string("window.totem-overlay { background: transparent; }");
@@ -226,6 +271,25 @@ mod tests {
     #[test]
     fn empty_product_matches_any() {
         assert_eq!(parse(&["--product", ""]).unwrap().unwrap().product, None);
+    }
+
+    #[test]
+    fn parses_overlay_options() {
+        let o = parse(&["--mode", "overlay", "--position", "top-right", "--margin", "12", "--scale", "0.75"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(o.mode, overlay::Mode::Overlay);
+        assert_eq!(o.position, overlay::Position::TopRight);
+        assert_eq!((o.margin, o.scale), (12, 0.75));
+    }
+
+    #[test]
+    fn rejects_bad_overlay_options() {
+        assert!(parse(&["--mode", "float"]).is_err());
+        assert!(parse(&["--position"]).is_err());
+        assert!(parse(&["--scale", "0"]).is_err());
+        assert!(parse(&["--scale", "NaN"]).is_err());
+        assert!(parse(&["--margin", "big"]).is_err());
     }
 
     #[test]

@@ -7,5 +7,6 @@ edition = "2024"
 async-channel = "2.5.0"
 cairo-rs = { version = "0.22.11", features = ["png"] }
 gtk = { version = "0.11.5", package = "gtk4", features = ["v4_12"] }
+gtk4-layer-shell = "0.9.0"
 hidapi = { version = "2.6.7", default-features = false, features = ["linux-shared-hidraw"] }
 pangocairo = "0.22.9"
