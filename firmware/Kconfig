@@ -5,3 +5,12 @@ config LAYER_OVERLAY_REPORT
     help
       Sends a Raw HID report whenever the layer state changes, and answers
       host queries with the current state. Used by the layer overlay app.
+
+config LAYER_OVERLAY_KEY_REPORT
+    bool "Also report pressed key positions"
+    default y
+    depends on LAYER_OVERLAY_REPORT
+    help
+      Sends the set of pressed key positions (both halves of a split) on every
+      press and release, so the overlay can highlight them. Adds one small
+      report per key event, which costs a little battery over Bluetooth.

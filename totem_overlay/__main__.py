@@ -32,6 +32,7 @@ def _monitor(product: str | None) -> int:
     import threading
 
     from .hidlistener import HidListener, find_devices
+    from .protocol import LayerState
 
     devices = find_devices(product)
     if not devices:
@@ -39,13 +40,16 @@ def _monitor(product: str | None) -> int:
     for d in devices:
         print(f"found: {d.get('product_string')!r} at {d['path'].decode(errors='replace')}")
 
-    def on_state(s):
-        print(f"layer index={s.index} id={s.layer_id} name={s.name!r} active_ids={s.active_ids()}", flush=True)
+    def on_report(r):
+        if isinstance(r, LayerState):
+            print(f"layer index={r.index} id={r.layer_id} name={r.name!r} active_ids={r.active_ids()}", flush=True)
+        else:
+            print(f"keys pressed={sorted(r.pressed())}", flush=True)
 
     def on_conn(c, label):
         print(("connected to " + label) if c else "disconnected", flush=True)
 
-    listener = HidListener(on_state, on_conn, product=product)
+    listener = HidListener(on_report, on_conn, product=product)
     listener.start()
     try:
         threading.Event().wait()

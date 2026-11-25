@@ -24,7 +24,7 @@ except (ValueError, ImportError):
 
 from . import keymap as km  # noqa: E402
 from . import layout  # noqa: E402
-from .protocol import LayerState  # noqa: E402
+from .protocol import KeyState, LayerState  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ BG = (0.09, 0.09, 0.11)
 KEY = (0.20, 0.20, 0.24)
 KEY_EMPTY = (0.14, 0.14, 0.17)
 KEY_HELD = (0.36, 0.55, 0.95)
+KEY_PRESSED = (0.95, 0.62, 0.25)
 TEXT = (0.95, 0.95, 0.97)
 TEXT_DIM = (0.55, 0.55, 0.62)
 ACCENT = (0.45, 0.65, 1.0)
@@ -60,6 +61,7 @@ class OverlayApp(Gtk.Application):
         self.positions = layout.totem()
         self.layers: list[km.Layer] = []
         self.state: LayerState | None = None
+        self.pressed: frozenset[int] = frozenset()
         self.connected = False
         self.device_label = ""
         self.error = ""
@@ -185,7 +187,7 @@ class OverlayApp(Gtk.Application):
 
         try:
             self._listener = HidListener(
-                on_state=lambda s: GLib.idle_add(self._set_state, s),
+                on_report=lambda r: GLib.idle_add(self._on_report, r),
                 on_connection=lambda c, label: GLib.idle_add(self._set_connected, c, label),
                 product=self.opts.product,
             )
@@ -208,8 +210,24 @@ class OverlayApp(Gtk.Application):
             self._set_state(LayerState(index=idx, layer_id=idx, mask=1 | 1 << idx, name=name))
             return True
 
+        def press() -> bool:  # walk a pressed key across the board
+            self._on_report(KeyState(mask=1 << (self._demo_key % len(self.positions))))
+            self._demo_key += 1
+            return True
+
+        self._demo_key = 0
         tick()
         GLib.timeout_add(1500, tick)
+        GLib.timeout_add(180, press)
+
+    def _on_report(self, report: LayerState | KeyState) -> bool:
+        if isinstance(report, KeyState):
+            pressed = report.pressed()
+            if pressed != self.pressed:
+                self.pressed = pressed
+                self.area.queue_draw()
+            return False
+        return self._set_state(report)
 
     def _set_state(self, state: LayerState) -> bool:
         self.state = state
@@ -222,6 +240,7 @@ class OverlayApp(Gtk.Application):
         self.device_label = label
         if not connected:
             self.state = None
+            self.pressed = frozenset()
         log.info("keyboard %s %s", "connected" if connected else "disconnected", label)
         self._update_visibility()
         self.area.queue_draw()
@@ -300,11 +319,13 @@ class OverlayApp(Gtk.Application):
             x = self.pad + pos.x * u + gap / 2
             y = self.pad + self.header + pos.y * u + gap / 2
             w, h = pos.w * u - gap, pos.h * u - gap
-            self._draw_key(cr, key, x, y, w, h, a)
+            self._draw_key(cr, key, x, y, w, h, a, pressed=i in self.pressed)
 
-    def _draw_key(self, cr, key: km.Key, x, y, w, h, a) -> None:
+    def _draw_key(self, cr, key: km.Key, x, y, w, h, a, pressed: bool = False) -> None:
         empty = not (key.tap or key.hold or key.shifted)
-        if key.kind == "held":
+        if pressed:
+            color, fg = KEY_PRESSED, BG
+        elif key.kind == "held":
             color, fg = KEY_HELD, TEXT
         elif key.kind in ("trans", "ghost") or empty:
             color, fg = KEY_EMPTY, TEXT_DIM
@@ -314,7 +335,7 @@ class OverlayApp(Gtk.Application):
         cr.set_source_rgba(*color, a)
         cr.fill()
 
-        if key.kind == "trans":
+        if key.kind == "trans" and not pressed:
             return  # transparent keys fall through; keep them visually quiet
         if key.tap:
             self._centered(cr, key.tap, x, y + (-h * 0.08 if key.hold else 0), w, h, 13, fg, a)

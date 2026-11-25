@@ -7,7 +7,7 @@ HERE = Path(__file__).parent
 
 def report(index, layer_id, mask, name=b""):
     data = bytearray(32)
-    data[0:2] = bytes([protocol.MAGIC, protocol.VERSION])
+    data[0:2] = bytes([protocol.MAGIC, protocol.TYPE_LAYER])
     data[2], data[3] = index, layer_id
     data[4:8] = mask.to_bytes(4, "little")
     data[8 : 8 + len(name)] = name
@@ -23,7 +23,16 @@ def test_parse_report():
 def test_parse_report_ignores_foreign_reports():
     assert protocol.parse_report(bytes(32)) is None
     assert protocol.parse_report(b"\x4c") is None
-    assert protocol.parse_report(bytes([protocol.MAGIC, 0x02]) + bytes(30)) is None
+    assert protocol.parse_report(bytes([protocol.MAGIC, 0x7F]) + bytes(30)) is None
+
+
+def test_parse_key_report():
+    data = bytearray(32)
+    data[0:2] = bytes([protocol.MAGIC, protocol.TYPE_KEYS])
+    data[2:10] = ((1 << 0) | (1 << 21) | (1 << 37)).to_bytes(8, "little")
+    s = protocol.parse_report(bytes(data))
+    assert isinstance(s, protocol.KeyState)
+    assert s.pressed() == {0, 21, 37}
 
 
 def test_query_report_has_report_id_and_full_length():

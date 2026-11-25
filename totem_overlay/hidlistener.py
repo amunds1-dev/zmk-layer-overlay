@@ -1,4 +1,4 @@
-"""Background thread that reads layer reports from the keyboard's Raw HID interface."""
+"""Background thread that reads layer and key reports from the keyboard's Raw HID interface."""
 
 from __future__ import annotations
 
@@ -41,21 +41,22 @@ def find_devices(product: str | None = None) -> list[dict]:
 
 
 class HidListener(threading.Thread):
-    """Calls on_state(LayerState) for every report and on_connection(bool, str) on (dis)connect.
+    """Calls on_report(LayerState | KeyState) for every report and on_connection(bool, str)
+    on (dis)connect.
 
     Callbacks run on this thread; GUI code must marshal them (e.g. GLib.idle_add).
     """
 
     def __init__(
         self,
-        on_state: Callable[[protocol.LayerState], None],
+        on_report: Callable[[protocol.LayerState | protocol.KeyState], None],
         on_connection: Callable[[bool, str], None],
         product: str | None = "TOTEM",
         retry_seconds: float = 2.0,
     ) -> None:
         super().__init__(daemon=True, name="hid-listener")
         _require_hidapi()
-        self._on_state = on_state
+        self._on_report = on_report
         self._on_connection = on_connection
         self._product = product
         self._retry = retry_seconds
@@ -97,8 +98,8 @@ class HidListener(threading.Thread):
                 data = dev.read(64, 500)
                 if not data:
                     continue
-                state = protocol.parse_report(data)
-                if state is not None:
-                    self._on_state(state)
+                report = protocol.parse_report(data)
+                if report is not None:
+                    self._on_report(report)
         finally:
             dev.close()

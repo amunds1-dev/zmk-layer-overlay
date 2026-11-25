@@ -2,7 +2,7 @@
 
 On-screen layer overlay for a ZMK TOTEM. The keyboard reports its active layer over
 Raw HID (USB or Bluetooth); this app shows that layer's keys in a click-through
-overlay using wlr-layer-shell (MangoWM, Hyprland, Sway, KDE, …).
+overlay using wlr-layer-shell (MangoWM, Hyprland, Sway, KDE, …), and highlights keys as you press them.
 
 This repo is two things:
 
@@ -47,7 +47,9 @@ usually left) in `build.yaml`:
 ```
 
 Build (GitHub Actions), then flash only that half: double-tap reset, copy the `.uf2`.
-The module is on by default once Raw HID is enabled (`CONFIG_LAYER_OVERLAY_REPORT`).
+The module is on by default once Raw HID is enabled (`CONFIG_LAYER_OVERLAY_REPORT`). It also reports
+pressed keys from both halves so the overlay can highlight them; set `CONFIG_LAYER_OVERLAY_KEY_REPORT=n`
+in your `.conf` to turn that off (saves a little battery over Bluetooth).
 
 ## 2. Install (CachyOS / Arch)
 
