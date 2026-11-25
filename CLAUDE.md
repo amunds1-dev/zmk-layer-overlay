@@ -23,10 +23,11 @@ The app is Rust + gtk4-rs (rewrite from a Python prototype is done; design notes
 ## Related repo
 
 `amunds1-dev/zmk-config-totem` (fork of Keycoon/zmk-config-totem), cloned at `~/zmk-config-totem`.
-Branch `layer-overlay` adds `zmk-raw-hid` + this repo to `config/west.yml` and
-`raw_hid_adapter` to the left half in `build.yaml`. Not merged to `main` yet (the keymap editor
-commits to `main`; merge once the user is happy). Firmware builds run on GitHub Actions:
-`gh workflow run build.yml -R amunds1-dev/zmk-config-totem --ref layer-overlay`.
+Its `main` has `zmk-raw-hid` + this repo in `config/west.yml`, and `raw_hid_adapter` plus the
+`studio-rpc-usb-uart` snippet on the left half in `build.yaml` (the `layer-overlay` branch was
+merged and deleted 2026-11-25). Only push to the fork (`origin`), never to Keycoon's upstream.
+Firmware builds run on GitHub Actions on push, or:
+`gh workflow run build.yml -R amunds1-dev/zmk-config-totem --ref main`.
 Firmware builds pull this repo's `main`, so firmware changes here need a push + rebuild.
 
 ## Raw HID protocol (firmware/src/layer_report.c is the source of truth)

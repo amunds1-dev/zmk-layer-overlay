@@ -170,6 +170,6 @@ Floating size/position: `width`, `height`, `offset_x`, `offset_y` keys.
 - keymap-drawer "parse failure" (resolved 2026-11-25): `~/zmk-config-totem` was never cloned on the
   CachyOS machine, so `keymap parse -z` exits with argparse's "can't open ... No such file". The
   Python overlay showed only the first stderr line (the usage banner), which hid that. Clone the
-  config repo (branch `layer-overlay`) before relying on the `.keymap` fallback. (The Rust app
+  config repo before relying on the `.keymap` fallback. (The Rust app
   parses `.keymap` files itself, so keymap-drawer is no longer involved.)
 - Bluetooth path not yet tested by the user (needs re-pairing after the new firmware).
