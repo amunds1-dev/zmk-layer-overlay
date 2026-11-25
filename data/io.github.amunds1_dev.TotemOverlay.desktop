@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Name=TOTEM Overlay
+GenericName=Keyboard Layer Overlay
+Comment=Show the active layer of a ZMK keyboard on screen
+Exec=totem-overlay
+Icon=io.github.amunds1_dev.TotemOverlay
+Terminal=false
+Categories=Utility;
+Keywords=zmk;keyboard;keymap;layer;totem;overlay;
+StartupNotify=false
+StartupWMClass=totem-overlay
+SingleMainWindow=true
+Actions=settings;
+
+[Desktop Action settings]
+Name=Settings
+Exec=totem-overlay --settings

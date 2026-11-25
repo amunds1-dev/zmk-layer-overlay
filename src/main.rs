@@ -47,6 +47,7 @@ const USAGE: &str = "usage: totem-overlay [options]
   --config PATH       settings file (default: ~/.config/totem-overlay/config.toml)
   --demo              fake layer changes and key presses instead of reading the keyboard
   -v, --verbose       print keyboard events
+  --monitor           print keyboard reports in the terminal, no window (to test the firmware)
   --render PATH W H   draw one frame to a PNG and exit (development aid)
   --layer N           with --render: draw layer N as if the keyboard reported it
   --fetch-keymap      read the keymap over USB (ZMK Studio), cache and print it, and exit
@@ -104,6 +105,7 @@ struct Options {
     render_layer: Option<u8>,
     fetch_keymap: bool,
     parse_keymap: Option<PathBuf>,
+    monitor: bool,
 }
 
 fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Option<Options>, String> {
@@ -135,6 +137,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Option<Options>,
             "--demo" => o.demo = true,
             "-v" | "--verbose" => o.verbose = true,
             "--fetch-keymap" => o.fetch_keymap = true,
+            "--monitor" => o.monitor = true,
             "--layer" => o.render_layer = Some(value("--layer")?.parse().map_err(|_| "--layer needs a layer number")?),
             "--render" => {
                 let path = args.next().map(PathBuf::from);
@@ -268,6 +271,13 @@ fn main() -> glib::ExitCode {
             return glib::ExitCode::FAILURE;
         }
     };
+
+    if opts.monitor {
+        let mut config = config::load(&opts.config.clone().unwrap_or_else(config::default_path)).0;
+        opts.overrides.apply(&mut config);
+        monitor(config.product_filter());
+        return glib::ExitCode::SUCCESS;
+    }
 
     if opts.fetch_keymap {
         return match studio::fetch() {
@@ -436,6 +446,7 @@ fn start(gapp: &gtk::Application, opts: &Options) -> Rc<App> {
     });
 
     load_keymap_file(&app);
+    gtk::Window::set_default_icon_name(GAPP_ID);
     install_css();
     build_window(&app);
     fetch_keymap(&app);
@@ -841,6 +852,32 @@ fn start_demo(tx: async_channel::Sender<hid::Event>, key_count: usize) {
         let keys = KeyState { mask: 1 << k };
         glib::ControlFlow::from(tx.send_blocking(hid::Event::Report(Report::Keys(keys))).is_ok())
     });
+}
+
+/// `--monitor`: prints what the keyboard reports until interrupted.
+fn monitor(product: Option<String>) {
+    use protocol::Report;
+    match &product {
+        Some(p) => println!("waiting for a Raw HID keyboard named {p:?} (Ctrl+C to stop)"),
+        None => println!("waiting for any Raw HID keyboard (Ctrl+C to stop)"),
+    }
+    let (tx, rx) = async_channel::unbounded();
+    let _listener = hid::Listener::start(product, tx);
+    while let Ok(event) = rx.recv_blocking() {
+        match event {
+            hid::Event::Connected(name) => println!("connected: {name}"),
+            hid::Event::Disconnected => println!("disconnected"),
+            hid::Event::Error(e) => println!("problem: {e}"),
+            hid::Event::Report(Report::Layer(l)) => {
+                let name = if l.name.is_empty() { String::new() } else { format!(" {:?}", l.name) };
+                println!("layer {} (id {}){name}, active layers mask {:#b}", l.index, l.layer_id, l.mask);
+            }
+            hid::Event::Report(Report::Keys(k)) => {
+                let keys: Vec<String> = (0..64).filter(|&i| k.is_pressed(i)).map(|i| i.to_string()).collect();
+                println!("pressed: {}", if keys.is_empty() { "none".into() } else { keys.join(" ") });
+            }
+        }
+    }
 }
 
 fn print_keymap(km: &keymap::Keymap) {

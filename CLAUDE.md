@@ -3,15 +3,22 @@
 On-screen layer overlay for ZMK keyboards (primarily a GEIST TOTEM, 38 keys, split,
 Seeed XIAO BLE / nRF52840, left half = central). Target: Linux, Wayland, MangoWM on CachyOS.
 
-**Active work: rewriting the app in Rust. Read `docs/rust-rewrite-plan.md` first.**
+The app is Rust + gtk4-rs (rewrite from a Python prototype is done; design notes and history in
+`docs/rust-rewrite-plan.md`).
 
 ## Layout of this repo
 
 - `firmware/` + `zephyr/module.yml`: ZMK module (C). Sends layer and pressed-key reports
   over Raw HID. Pulled into the user's zmk-config by west; do not move these paths.
-- `totem_overlay/`: current Python prototype (GTK4 + layer-shell). Working reference for the
-  Rust app; delete once the Rust app reaches parity.
-- `udev/`: hidraw access rule. `tests/`: Python tests (`python -m pytest tests`).
+- `src/`: the app. `hid.rs`/`protocol.rs` Raw HID, `studio/` ZMK Studio RPC client (keymap +
+  physical layout over `/dev/ttyACM*`), `keymap_file/` `.keymap` fallback parser, `labels.rs`
+  key labels, `draw.rs` cairo drawing, `overlay.rs` layer-shell, `settings.rs`/`config.rs`.
+- `data/`: `.desktop` + icon. `packaging/arch/PKGBUILD`: builds the checkout's HEAD
+  (`makepkg -si` from that folder; not the repo root, makepkg's `src/` would clash).
+- `udev/`: hidraw + Studio tty access rule. `tools/gen-zmk-defines.py`: regenerates
+  `src/keymap_file/zmk-defines.h` from ZMK headers.
+- Checks: `cargo test`, `cargo clippy --all-targets`. `--demo`, `--render`, `--monitor`,
+  `--fetch-keymap`, `--parse-keymap` help with testing without/with the keyboard.
 
 ## Related repo
 

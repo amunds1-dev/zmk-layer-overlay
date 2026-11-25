@@ -1,0 +1,54 @@
+# Builds the latest commit of the checkout this file is in:
+#   cd packaging/arch && makepkg -si
+pkgname=totem-overlay-git
+_name=totem-overlay
+_appid=io.github.amunds1_dev.TotemOverlay
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="On-screen layer overlay for ZMK keyboards (GEIST TOTEM), for Wayland"
+arch=('x86_64' 'aarch64')
+url="https://github.com/amunds1-dev/zmk-layer-overlay"
+license=('LicenseRef-unknown')
+depends=('gtk4' 'gtk4-layer-shell' 'hidapi' 'cairo' 'pango' 'glib2' 'gcc-libs' 'glibc')
+makedepends=('cargo' 'git')
+provides=("$_name")
+conflicts=("$_name")
+options=('!lto')
+source=("$_name::git+file://$(realpath "$startdir/../..")")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_name"
+  local version
+  version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+  printf "%s.r%s.g%s" "$version" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd "$_name"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$_name"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+}
+
+check() {
+  cd "$_name"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo test --frozen --release
+}
+
+package() {
+  cd "$_name"
+  install -Dm755 "target/release/$_name" "$pkgdir/usr/bin/$_name"
+  install -Dm644 "data/$_appid.desktop" "$pkgdir/usr/share/applications/$_appid.desktop"
+  install -Dm644 "data/$_appid.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/$_appid.svg"
+  # pacman's udev hook reloads the rules and re-triggers devices after install.
+  install -Dm644 udev/70-totem-overlay.rules "$pkgdir/usr/lib/udev/rules.d/70-totem-overlay.rules"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$_name/README.md"
+}

@@ -120,7 +120,7 @@ Floating size/position: `width`, `height`, `offset_x`, `offset_y` keys.
 7. Packaging: `PKGBUILD`, `.desktop`, icon, udev rules (hidraw + tty), README rewrite. Remove the
    Python prototype.
 
-## Implementation notes (milestones 1-6 done)
+## Implementation notes (all milestones done)
 
 - Code is a Cargo project at the repo root (`src/`). `--render PATH W H` draws one frame to a PNG
   and `--demo` fakes keyboard events, handy for screenshots. `--config PATH` uses another
@@ -159,6 +159,12 @@ Floating size/position: `width`, `height`, `offset_x`, `offset_y` keys.
   so the built-in TOTEM layout is used. Checked against the user's `totem.keymap`: every label
   matches what Studio reports.
 
+- Packaging (milestone 7): `packaging/arch/PKGBUILD` (`totem-overlay-git`, builds the local
+  checkout's HEAD via `git+file://`), `data/` desktop file + icon named after the GApplication id
+  (`StartupWMClass=totem-overlay` for the keyboard window), udev rule in `/usr/lib/udev/rules.d`
+  (pacman's udev hook reloads and triggers). `--monitor` replaces the Python `--monitor`. The
+  Python prototype is removed.
+
 ## Open issues
 
 - keymap-drawer "parse failure" (resolved 2026-11-25): `~/zmk-config-totem` was never cloned on the
@@ -166,4 +172,5 @@ Floating size/position: `width`, `height`, `offset_x`, `offset_y` keys.
   Python overlay showed only the first stderr line (the usage banner), which hid that. Clone the
   config repo (branch `layer-overlay`) before relying on the `.keymap` fallback. (The Rust app
   parses `.keymap` files itself, so keymap-drawer is no longer involved.)
+- The repo has no LICENSE yet; the PKGBUILD says `LicenseRef-unknown` until the user picks one.
 - Bluetooth path not yet tested by the user (needs re-pairing after the new firmware).
