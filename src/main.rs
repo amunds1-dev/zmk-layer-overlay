@@ -306,8 +306,24 @@ fn start(gapp: &gtk::Application, opts: &Options) -> Rc<App> {
         }
     });
 
+    install_css();
     build_window(&app);
     app
+}
+
+const CSS: &str = "
+/* Let the drawing's own (translucent) background show instead of the theme's. */
+window.totem-overlay { background: transparent; }
+/* Breeze gives sliders margin: -9px around a 16px knob, which comes out negative (GTK warns
+   'GtkGizmo (slider) reported min width -2') whenever the 1px border isn't counted. */
+.totem-settings scale slider { margin: -8px; }
+";
+
+fn install_css() {
+    let Some(display) = gdk::Display::default() else { return };
+    let css = gtk::CssProvider::new();
+    css.load_from_string(CSS);
+    gtk::style_context_add_provider_for_display(&display, &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
 }
 
 fn queue_draw(app: &App) {
@@ -350,14 +366,6 @@ fn build_window(app: &Rc<App>) {
         .child(&area)
         .build();
     win.add_css_class("totem-overlay");
-    // Let the drawing's own (translucent) background show instead of the theme's.
-    let css = gtk::CssProvider::new();
-    css.load_from_string("window.totem-overlay { background: transparent; }");
-    gtk::style_context_add_provider_for_display(
-        &gtk::prelude::WidgetExt::display(&win),
-        &css,
-        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-    );
 
     let overlay = config.mode == Mode::Overlay && overlay::setup(&win, config.position, config.margin);
     if overlay {
@@ -386,7 +394,16 @@ fn build_window(app: &Rc<App>) {
 
     let old = app.window.replace(Some((win.clone(), area)));
     win.present();
-    if let Some((old_win, _)) = old {
+    if let Some((old_win, old_area)) = old {
+        // An open settings popover is parented to the old drawing area; detach it first.
+        let mut child = old_area.first_child();
+        while let Some(c) = child {
+            child = c.next_sibling();
+            if let Ok(p) = c.downcast::<gtk::Popover>() {
+                p.popdown();
+                p.unparent();
+            }
+        }
         // Don't let closing the old window quit the app.
         old_win.set_application(None::<&gtk::Application>);
         old_win.destroy();

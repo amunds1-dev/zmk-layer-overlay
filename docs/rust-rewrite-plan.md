@@ -96,8 +96,14 @@ Config: `~/.config/mango/config.conf`. Autostart is `exec_once=…` (underscore;
 says `exec-once`, which is wrong; fix it). Suggested rule for window mode, ship it in the README:
 
 ```
-window_rule=is_floating:1,is_overlay:1,is_global:1,no_border:1,is_open_silent:1,app_id:^totem-overlay$
+window_rule=is_floating:1,is_overlay:1,is_global:1,no_border:1,no_blur:1,no_shadow:1,unfocused_opacity:1.0,is_open_silent:1,app_id:^totem-overlay$
 ```
+
+`no_blur:1` matters: with `blur=1` + `blur_optimized=1` Mango blurs a cached copy of the
+wallpaper behind translucent windows, so lowering the opacity showed blurred wallpaper instead
+of the windows underneath. `unfocused_opacity:1.0` stops Mango dimming the window on top of the
+app's own opacity. (Overlay mode is a layer surface, so these window rules don't apply to it;
+`blur_layer=0` already keeps it unblurred.)
 
 `is_overlay` = always on top, `is_global` = on every tag, `is_open_silent` = don't take focus on open.
 Floating size/position: `width`, `height`, `offset_x`, `offset_y` keys.

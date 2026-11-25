@@ -81,6 +81,7 @@ pub fn build(config: &Config, on_change: Rc<dyn Fn(Change)>, on_quit: impl Fn() 
     hint.add_css_class("dim-label");
 
     let vbox = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    vbox.add_css_class("totem-settings");
     vbox.set_margin_top(12);
     vbox.set_margin_bottom(12);
     vbox.set_margin_start(12);
