@@ -1,0 +1,9 @@
+[package]
+name = "totem-overlay"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cairo-rs = { version = "0.22.11", features = ["png"] }
+gtk = { version = "0.11.5", package = "gtk4", features = ["v4_12"] }
+pangocairo = "0.22.9"

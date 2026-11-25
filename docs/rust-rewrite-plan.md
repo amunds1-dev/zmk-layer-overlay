@@ -116,9 +116,9 @@ Floating size/position: `width`, `height`, `offset_x`, `offset_y` keys.
 
 ## Open issues
 
-- On the user's machine, keymap-drawer fails to parse `~/zmk-config-totem/config/totem.keymap` (the
-  Python overlay only shows the first line of the error). Run
-  `keymap parse -z ~/zmk-config-totem/config/totem.keymap` to see why. Becomes less important once
-  Studio is the keymap source, but it may point to something odd in the file (check `git status` /
-  line endings in that clone).
+- keymap-drawer "parse failure" (resolved 2026-11-25): `~/zmk-config-totem` was never cloned on the
+  CachyOS machine, so `keymap parse -z` exits with argparse's "can't open ... No such file". The
+  Python overlay showed only the first stderr line (the usage banner), which hid that. Clone the
+  config repo (branch `layer-overlay`) before relying on the `.keymap` fallback. The Rust app
+  should show the last stderr line (or all of it), not the first.
 - Bluetooth path not yet tested by the user (needs re-pairing after the new firmware).
