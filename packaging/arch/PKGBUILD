@@ -3,12 +3,12 @@
 pkgname=totem-overlay-git
 _name=totem-overlay
 _appid=io.github.amunds1_dev.TotemOverlay
-pkgver=0.1.0
+pkgver=0.1.0.r11.g00d69d1
 pkgrel=1
 pkgdesc="On-screen layer overlay for ZMK keyboards (GEIST TOTEM), for Wayland"
 arch=('x86_64' 'aarch64')
 url="https://github.com/amunds1-dev/zmk-layer-overlay"
-license=('LicenseRef-unknown')
+license=('MIT')
 depends=('gtk4' 'gtk4-layer-shell' 'hidapi' 'cairo' 'pango' 'glib2' 'gcc-libs' 'glibc')
 makedepends=('cargo' 'git')
 provides=("$_name")
@@ -51,4 +51,5 @@ package() {
   # pacman's udev hook reloads the rules and re-triggers devices after install.
   install -Dm644 udev/70-totem-overlay.rules "$pkgdir/usr/lib/udev/rules.d/70-totem-overlay.rules"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$_name/README.md"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

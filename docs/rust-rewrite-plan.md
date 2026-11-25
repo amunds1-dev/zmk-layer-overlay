@@ -172,5 +172,4 @@ Floating size/position: `width`, `height`, `offset_x`, `offset_y` keys.
   Python overlay showed only the first stderr line (the usage banner), which hid that. Clone the
   config repo (branch `layer-overlay`) before relying on the `.keymap` fallback. (The Rust app
   parses `.keymap` files itself, so keymap-drawer is no longer involved.)
-- The repo has no LICENSE yet; the PKGBUILD says `LicenseRef-unknown` until the user picks one.
 - Bluetooth path not yet tested by the user (needs re-pairing after the new firmware).

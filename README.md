@@ -188,3 +188,7 @@ by `tools/gen-zmk-defines.py` from ZMK's headers (see the script for how to rege
 
 The Raw HID protocol is documented in `firmware/src/layer_report.c`. Design notes are in
 `docs/rust-rewrite-plan.md`.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
