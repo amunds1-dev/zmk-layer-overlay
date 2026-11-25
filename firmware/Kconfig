@@ -1,0 +1,7 @@
+config LAYER_OVERLAY_REPORT
+    bool "Report the active layer to the host over Raw HID"
+    default y
+    depends on RAW_HID
+    help
+      Sends a Raw HID report whenever the layer state changes, and answers
+      host queries with the current state. Used by the layer overlay app.

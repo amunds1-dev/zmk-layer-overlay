@@ -1,0 +1,6 @@
+# ZMK/Zephyr module: reports the active layer over Raw HID for the overlay app.
+# Add this repo (and zzeneg/zmk-raw-hid) to your zmk-config's config/west.yml.
+name: zmk-layer-overlay
+build:
+  cmake: firmware
+  kconfig: firmware/Kconfig

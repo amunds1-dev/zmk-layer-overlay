@@ -1,0 +1,5 @@
+# Lets the logged-in user read the TOTEM's Raw HID interface (layer reports),
+# over USB (bus 0003) and Bluetooth (bus 0005). 1D50:615E is ZMK's default VID:PID.
+# Install: sudo cp 70-totem-overlay.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
+SUBSYSTEM=="hidraw", KERNELS=="0003:1D50:615E.*", TAG+="uaccess"
+SUBSYSTEM=="hidraw", KERNELS=="0005:1D50:615E.*", TAG+="uaccess"
