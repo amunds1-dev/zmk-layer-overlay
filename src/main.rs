@@ -1,9 +1,13 @@
 mod draw;
+mod hid;
 mod layout;
+mod protocol;
+mod state;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::Duration;
 
 use gtk::prelude::*;
 use gtk::{cairo, gio, glib};
@@ -14,11 +18,52 @@ const APP_ID: &str = "totem-overlay";
 /// Default window size: pixels per key unit.
 const DEFAULT_UNIT_PX: f64 = 56.0;
 
+const USAGE: &str = "usage: totem-overlay [options]
+
+  --product NAME      only use Raw HID devices whose product name contains NAME
+                      (default: TOTEM; \"\" for any)
+  --demo              fake layer changes and key presses instead of reading the keyboard
+  -v, --verbose       print keyboard events
+  --render PATH W H   draw one frame to a PNG and exit (development aid)";
+
+#[derive(Debug, Clone)]
+struct Options {
+    product: Option<String>,
+    demo: bool,
+    verbose: bool,
+    render: Option<(PathBuf, i32, i32)>,
+}
+
+fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Option<Options>, String> {
+    let mut o = Options { product: Some("TOTEM".into()), demo: false, verbose: false, render: None };
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--product" => {
+                let p = args.next().ok_or("--product needs a NAME")?;
+                o.product = (!p.is_empty()).then_some(p);
+            }
+            "--demo" => o.demo = true,
+            "-v" | "--verbose" => o.verbose = true,
+            "--render" => {
+                let path = args.next().map(PathBuf::from);
+                let w = args.next().and_then(|v| v.parse().ok());
+                let h = args.next().and_then(|v| v.parse().ok());
+                match (path, w, h) {
+                    (Some(p), Some(w), Some(h)) => o.render = Some((p, w, h)),
+                    _ => return Err("--render needs PATH WIDTH HEIGHT".into()),
+                }
+            }
+            "-h" | "--help" => return Ok(None),
+            other => return Err(format!("unknown argument: {other}")),
+        }
+    }
+    Ok(Some(o))
+}
+
 struct State {
     keys: Vec<layout::Key>,
     labels: Vec<String>,
-    title: String,
-    subtitle: String,
+    keyboard: state::Keyboard,
     bg_alpha: f64,
     key_alpha: f64,
 }
@@ -28,53 +73,39 @@ impl State {
         let keys = layout::totem();
         // No keymap source yet (milestones 5/6): label keys with their position index.
         let labels = (0..keys.len()).map(|i| i.to_string()).collect();
-        State {
-            keys,
-            labels,
-            title: "TOTEM".into(),
-            subtitle: "no keymap loaded".into(),
-            bg_alpha: 0.88,
-            key_alpha: 1.0,
-        }
+        State { keys, labels, keyboard: state::Keyboard::default(), bg_alpha: 0.88, key_alpha: 1.0 }
     }
 
-    fn scene(&self) -> draw::Scene<'_> {
-        draw::Scene {
+    fn draw(&self, cr: &cairo::Context, w: f64, h: f64) -> Result<(), cairo::Error> {
+        let (title, subtitle) = self.keyboard.header();
+        let scene = draw::Scene {
             keys: &self.keys,
-            title: &self.title,
-            subtitle: &self.subtitle,
+            title: &title,
+            subtitle: &subtitle,
             labels: &self.labels,
+            pressed: self.keyboard.keys,
             bg_alpha: self.bg_alpha,
             key_alpha: self.key_alpha,
-        }
+        };
+        draw::draw(cr, w, h, &scene)
     }
 }
 
 fn main() -> glib::ExitCode {
-    let mut args = std::env::args().skip(1);
-    let mut render: Option<(PathBuf, i32, i32)> = None;
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            // Development aid: draw one frame to a PNG without opening a window.
-            "--render" => {
-                let path = args.next().map(PathBuf::from);
-                let w = args.next().and_then(|v| v.parse().ok());
-                let h = args.next().and_then(|v| v.parse().ok());
-                match (path, w, h) {
-                    (Some(p), Some(w), Some(h)) => render = Some((p, w, h)),
-                    _ => return usage("--render needs PATH WIDTH HEIGHT"),
-                }
-            }
-            "-h" | "--help" => {
-                println!("usage: totem-overlay [--render PATH WIDTH HEIGHT]");
-                return glib::ExitCode::SUCCESS;
-            }
-            other => return usage(&format!("unknown argument: {other}")),
+    let opts = match parse_args(std::env::args().skip(1)) {
+        Ok(Some(o)) => o,
+        Ok(None) => {
+            println!("{USAGE}");
+            return glib::ExitCode::SUCCESS;
         }
-    }
+        Err(msg) => {
+            eprintln!("{msg}\n{USAGE}");
+            return glib::ExitCode::FAILURE;
+        }
+    };
 
-    if let Some((path, w, h)) = render {
-        return match render_png(&State::new(), &path, w, h) {
+    if let Some((path, w, h)) = &opts.render {
+        return match render_png(&State::new(), path, *w, *h) {
             Ok(()) => glib::ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("render failed: {e}");
@@ -84,20 +115,13 @@ fn main() -> glib::ExitCode {
     }
 
     glib::set_prgname(Some(APP_ID));
-    let app = gtk::Application::builder()
-        .flags(gio::ApplicationFlags::NON_UNIQUE)
-        .build();
-    app.connect_activate(build_window);
+    let app = gtk::Application::builder().flags(gio::ApplicationFlags::NON_UNIQUE).build();
+    app.connect_activate(move |app| build_window(app, &opts));
     // GTK must not see our arguments; they are parsed above.
     app.run_with_args::<&str>(&[])
 }
 
-fn usage(msg: &str) -> glib::ExitCode {
-    eprintln!("{msg}\nusage: totem-overlay [--render PATH WIDTH HEIGHT]");
-    glib::ExitCode::FAILURE
-}
-
-fn build_window(app: &gtk::Application) {
+fn build_window(app: &gtk::Application, opts: &Options) {
     let state = Rc::new(RefCell::new(State::new()));
     let (nat_w, nat_h) = draw::natural_size(&state.borrow().keys);
 
@@ -106,7 +130,7 @@ fn build_window(app: &gtk::Application) {
     area.set_vexpand(true);
     let st = state.clone();
     area.set_draw_func(move |_, cr, w, h| {
-        if let Err(e) = draw::draw(cr, f64::from(w), f64::from(h), &st.borrow().scene()) {
+        if let Err(e) = st.borrow().draw(cr, f64::from(w), f64::from(h)) {
             eprintln!("draw failed: {e}");
         }
     });
@@ -128,14 +152,86 @@ fn build_window(app: &gtk::Application) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
     win.add_css_class("totem-overlay");
+
+    let (tx, rx) = async_channel::unbounded::<hid::Event>();
+    if opts.demo {
+        start_demo(tx, state.borrow().keys.len());
+    } else {
+        let listener = RefCell::new(Some(hid::Listener::start(opts.product.clone(), tx)));
+        app.connect_shutdown(move |_| {
+            if let Some(mut l) = listener.take() {
+                l.stop();
+            }
+        });
+    }
+
+    let verbose = opts.verbose;
+    glib::spawn_future_local(async move {
+        while let Ok(event) = rx.recv().await {
+            if verbose {
+                eprintln!("{event:?}");
+            }
+            if state.borrow_mut().keyboard.apply(event) {
+                area.queue_draw();
+            }
+        }
+    });
+
     win.present();
+}
+
+/// Feeds fake events through the same path as the HID listener.
+fn start_demo(tx: async_channel::Sender<hid::Event>, key_count: usize) {
+    use protocol::{KeyState, LayerState, Report};
+    let _ = tx.send_blocking(hid::Event::Connected("demo".into()));
+    let layer = Cell::new(0u8);
+    let tx2 = tx.clone();
+    glib::timeout_add_local(Duration::from_millis(1500), move || {
+        let i = (layer.get() + 1) % 4;
+        layer.set(i);
+        let state = LayerState { index: i, layer_id: i, mask: 1 | 1 << i, name: String::new() };
+        glib::ControlFlow::from(tx2.send_blocking(hid::Event::Report(Report::Layer(state))).is_ok())
+    });
+    let key = Cell::new(0usize);
+    glib::timeout_add_local(Duration::from_millis(180), move || {
+        let k = key.get();
+        key.set((k + 1) % key_count);
+        let keys = KeyState { mask: 1 << k };
+        glib::ControlFlow::from(tx.send_blocking(hid::Event::Report(Report::Keys(keys))).is_ok())
+    });
 }
 
 fn render_png(state: &State, path: &PathBuf, w: i32, h: i32) -> Result<(), Box<dyn std::error::Error>> {
     let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, w, h)?;
     let cr = cairo::Context::new(&surface)?;
-    draw::draw(&cr, f64::from(w), f64::from(h), &state.scene())?;
+    state.draw(&cr, f64::from(w), f64::from(h))?;
     let mut file = std::fs::File::create(path)?;
     surface.write_to_png(&mut file)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Option<Options>, String> {
+        parse_args(args.iter().map(|s| s.to_string()))
+    }
+
+    #[test]
+    fn default_product_filter_is_totem() {
+        assert_eq!(parse(&[]).unwrap().unwrap().product.as_deref(), Some("TOTEM"));
+    }
+
+    #[test]
+    fn empty_product_matches_any() {
+        assert_eq!(parse(&["--product", ""]).unwrap().unwrap().product, None);
+    }
+
+    #[test]
+    fn rejects_unknown_and_incomplete_args() {
+        assert!(parse(&["--bogus"]).is_err());
+        assert!(parse(&["--render", "x.png", "10"]).is_err());
+        assert!(parse(&["--help"]).unwrap().is_none());
+    }
 }

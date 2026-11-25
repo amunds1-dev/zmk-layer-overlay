@@ -6,11 +6,13 @@ use gtk::cairo::{Context, Operator};
 use gtk::pango;
 
 use crate::layout::{self, Key};
+use crate::protocol::KeyState;
 
 type Rgb = (f64, f64, f64);
 
 const BG: Rgb = (0.09, 0.09, 0.11);
 const KEY: Rgb = (0.20, 0.20, 0.24);
+const KEY_PRESSED: Rgb = (0.95, 0.62, 0.25);
 const TEXT: Rgb = (0.95, 0.95, 0.97);
 const TEXT_DIM: Rgb = (0.55, 0.55, 0.62);
 const ACCENT: Rgb = (0.45, 0.65, 1.0);
@@ -28,6 +30,7 @@ pub struct Scene<'a> {
     pub subtitle: &'a str,
     /// Labels in keymap order; missing entries are drawn blank.
     pub labels: &'a [String],
+    pub pressed: KeyState,
     /// Opacity of the window background.
     pub bg_alpha: f64,
     /// Opacity of the keys (fill and labels).
@@ -76,11 +79,13 @@ pub fn draw(cr: &Context, width: f64, height: f64, scene: &Scene) -> Result<(), 
         cr.rotate(key.rot.to_radians());
         cr.translate(key.x - key.rx + GAP / 2.0, key.y - key.ry + GAP / 2.0);
         let (w, h) = (key.w - GAP, key.h - GAP);
+        let pressed = scene.pressed.is_pressed(i);
+        let (fill, fg) = if pressed { (KEY_PRESSED, BG) } else { (KEY, TEXT) };
         rounded(cr, 0.0, 0.0, w, h, KEY_RADIUS);
-        set_rgba(cr, KEY, scene.key_alpha);
+        set_rgba(cr, fill, scene.key_alpha);
         cr.fill()?;
         if let Some(label) = scene.labels.get(i).filter(|l| !l.is_empty()) {
-            centered(cr, label, w, h, unit, TEXT, scene.key_alpha);
+            centered(cr, label, w, h, unit, fg, scene.key_alpha);
         }
         cr.restore()?;
     }
