@@ -253,6 +253,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "gdk4-wayland"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99cc5266dc4e8745a4c4683b26a0c54977a452809d572c940e39c6844663c0ec"
+dependencies = [
+ "gdk4",
+ "gdk4-wayland-sys",
+ "gio",
+ "glib",
+ "libc",
+]
+
+[[package]]
+name = "gdk4-wayland-sys"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb55bc5225519d34fdf1412db3755af88d1388a1c2a053d92e6751db13d96e68"
+dependencies = [
+ "glib-sys",
+ "libc",
+ "system-deps",
+]
+
+[[package]]
 name = "gio"
 version = "0.22.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -662,6 +686,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
+name = "serde"
+version = "1.0.229"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
+dependencies = [
+ "serde_core",
+ "serde_derive",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -795,10 +829,14 @@ version = "0.1.0"
 dependencies = [
  "async-channel",
  "cairo-rs",
+ "gdk4-wayland",
+ "gio",
  "gtk4",
  "gtk4-layer-shell",
  "hidapi",
  "pangocairo",
+ "serde",
+ "toml",
 ]
 
 [[package]]

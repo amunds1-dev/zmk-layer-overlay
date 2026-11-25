@@ -4,10 +4,12 @@ use std::fmt;
 use std::str::FromStr;
 
 use gtk::prelude::*;
+use serde::{Deserialize, Serialize};
 use gtk::cairo;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Mode {
     /// Normal xdg toplevel the compositor manages.
     #[default]
@@ -28,7 +30,8 @@ impl FromStr for Mode {
 }
 
 /// Where the overlay sits on the screen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Position {
     Top,
     #[default]
@@ -111,11 +114,9 @@ pub fn setup(win: &gtk::ApplicationWindow, position: Position, margin: i32) -> b
     win.set_namespace(Some(crate::APP_ID));
     win.set_layer(Layer::Overlay);
     win.set_keyboard_mode(KeyboardMode::None);
-    win.set_exclusive_zone(-1); // don't move other surfaces (panels/bars) out of the way
-    for &edge in position.edges() {
-        win.set_anchor(edge, true);
-        win.set_margin(edge, margin);
-    }
+    // Reserve no space (windows stay put), but keep clear of space panels/bars reserve.
+    win.set_exclusive_zone(0);
+    place(win, position, margin);
     win.set_resizable(false);
     // Empty input region: pointer events go to whatever is underneath.
     win.connect_map(|w| {
@@ -124,6 +125,15 @@ pub fn setup(win: &gtk::ApplicationWindow, position: Position, margin: i32) -> b
         }
     });
     true
+}
+
+/// Anchors an overlay window (set up with [`setup`]); can be called again while it is shown.
+pub fn place(win: &gtk::ApplicationWindow, position: Position, margin: i32) {
+    for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
+        let anchored = position.edges().contains(&edge);
+        win.set_anchor(edge, anchored);
+        win.set_margin(edge, if anchored { margin } else { 0 });
+    }
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 //! Keyboard state as seen by the UI, updated from HID listener events.
 
+use crate::config::Show;
 use crate::hid::Event;
 use crate::protocol::{KeyState, LayerState, Report};
 
@@ -39,6 +40,16 @@ impl Keyboard {
         self.device.is_some()
     }
 
+    /// Whether the drawing should be visible under the given show policy. Errors always show.
+    pub fn wants_visible(&self, show: Show) -> bool {
+        match show {
+            Show::Always => true,
+            Show::Layers => {
+                self.error.is_some() || (self.connected() && self.layer.as_ref().is_some_and(|l| l.index != 0))
+            }
+        }
+    }
+
     /// Header text: (title, subtitle).
     pub fn header(&self) -> (String, String) {
         let title = match &self.layer {
@@ -55,6 +66,13 @@ impl Keyboard {
         };
         (title, subtitle)
     }
+}
+
+/// One animation frame (~16 ms) of the show/hide fade. Fades in fast and out a little slower,
+/// so quick layer taps don't flicker.
+pub fn fade_step(alpha: f64, target: f64) -> f64 {
+    let step = if target > alpha { 0.25 } else { 0.12 };
+    if (target - alpha).abs() <= step { target } else { alpha + step.copysign(target - alpha) }
 }
 
 #[cfg(test)]
@@ -117,5 +135,38 @@ mod tests {
         assert_eq!(kb.header().1, "cannot open /dev/hidraw3");
         kb.apply(Event::Connected("TOTEM".into()));
         assert_eq!(kb.error, None);
+    }
+
+    #[test]
+    fn layers_policy_shows_only_non_base_layers() {
+        let mut kb = Keyboard::default();
+        assert!(kb.wants_visible(Show::Always));
+        assert!(!kb.wants_visible(Show::Layers));
+        kb.apply(Event::Connected("TOTEM".into()));
+        kb.apply(layer(0, ""));
+        assert!(!kb.wants_visible(Show::Layers));
+        kb.apply(layer(2, ""));
+        assert!(kb.wants_visible(Show::Layers));
+        kb.apply(Event::Disconnected);
+        assert!(!kb.wants_visible(Show::Layers));
+        kb.apply(Event::Error("cannot open".into()));
+        assert!(kb.wants_visible(Show::Layers));
+    }
+
+    #[test]
+    fn fade_reaches_target_exactly() {
+        let mut a = 0.0;
+        let mut frames = 0;
+        while a != 1.0 {
+            a = fade_step(a, 1.0);
+            frames += 1;
+        }
+        assert_eq!(frames, 4);
+        while a != 0.0 {
+            a = fade_step(a, 0.0);
+            frames += 1;
+        }
+        assert_eq!(frames, 4 + 9);
+        assert_eq!(fade_step(0.5, 0.5), 0.5);
     }
 }

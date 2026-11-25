@@ -114,6 +114,21 @@ Floating size/position: `width`, `height`, `offset_x`, `offset_y` keys.
 7. Packaging: `PKGBUILD`, `.desktop`, icon, udev rules (hidraw + tty), README rewrite. Remove the
    Python prototype.
 
+## Implementation notes (milestones 1-4 done)
+
+- Code is a Cargo project at the repo root (`src/`). `--render PATH W H` draws one frame to a PNG
+  and `--demo` fakes keyboard events, handy for screenshots. `--config PATH` uses another
+  settings file, so tests don't touch the user's real one.
+- Single instance: GApplication id `io.github.amunds1_dev.TotemOverlay`, so a second
+  `totem-overlay` (launcher, keybinding, `--settings`) opens the settings window in the running
+  instance. The keyboard window's Wayland app id is reset to `totem-overlay` on map (GTK sets it
+  from the GApplication id when the window is shown, so setting it on realize is too early); the settings window keeps the
+  GApplication id so the `^totem-overlay$` window rule doesn't make it an overlay.
+- Settings: right-click popover in window mode; settings window in overlay mode (opened
+  automatically when switching to overlay). Command-line flags override the file for one run and
+  are never saved: each settings edit is applied to both the effective and the file config.
+- Overlay uses exclusive zone 0, so margins count from inside panels/bars.
+
 ## Open issues
 
 - keymap-drawer "parse failure" (resolved 2026-11-25): `~/zmk-config-totem` was never cloned on the
