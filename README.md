@@ -82,7 +82,7 @@ Or install the command: `pip install --user --break-system-packages -e .` → `t
 | `--margin`, `--scale`, `--opacity` | `40`, `1.0`, `0.88` | |
 | `--product` | `TOTEM` | HID product name filter |
 
-Autostart in MangoWM: add `exec-once=python -m totem_overlay -k …` (with the full path to this folder via `cd`/`PYTHONPATH`, or the installed `totem-overlay` command) to `~/.config/mango/config.conf`.
+Autostart in MangoWM: add `exec_once=python -m totem_overlay -k …` (with the full path to this folder via `cd`/`PYTHONPATH`, or the installed `totem-overlay` command) to `~/.config/mango/config.conf`.
 
 ## How layers are matched
 
